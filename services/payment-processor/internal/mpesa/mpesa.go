@@ -152,3 +152,21 @@ func NewService() Service {
 	}
 }
 
+// EncryptSecurityCredential encrypts the initiator password using the Safaricom public key certificate.
+func EncryptSecurityCredential(initiatorPassword string, certPEM string) (string, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return "", errors.New("failed to parse certificate PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse x509 certificate: %w", err)
+	}
+
+	pubKey, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		return "", errors.New("certificate does not contain an RSA public key")
+	}
+
+	
