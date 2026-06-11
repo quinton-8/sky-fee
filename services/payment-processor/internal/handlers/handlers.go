@@ -334,3 +334,81 @@ func (s *Server) ProcessInvoiceSettlement(paymentHash string) error {
 	s.wsManager.Notify(payment.ID.String(), payment)
 	return nil
 }
+
+// ==========================================
+// WebSocket Manager logic
+// ==========================================
+
+func (m *WSManager) Register(paymentID string, conn *websocket.Conn) {
+	m.Lock()
+	defer m.Unlock()
+	m.clients[paymentID] = append(m.clients[paymentID], conn)
+	log.Printf("🔌 WS client registered for payment updates: %s\n", paymentID)
+}
+
+func (m *WSManager) Unregister(paymentID string, conn *websocket.Conn) {
+	m.Lock()
+	defer m.Unlock()
+	conns := m.clients[paymentID]
+	for i, c := range conns {
+		if c == conn {
+			m.clients[paymentID] = append(conns[:i], conns[i+1:]...)
+			break
+		}
+	}
+	log.Printf("🔌 WS client disconnected from payment updates: %s\n", paymentID)
+}
+
+func (m *WSManager) Notify(paymentID string, payment *models.Payment) {
+	m.Lock()
+	conns, exists := m.clients[paymentID]
+	if !exists || len(conns) == 0 {
+		m.Unlock()
+		return
+	}
+	// copy to slice to write outside lock
+	activeConns := make([]*websocket.Conn, len(conns))
+	copy(activeConns, conns)
+	m.Unlock()
+
+	for _, conn := range activeConns {
+		err := conn.WriteJSON(payment)
+		if err != nil {
+			log.Printf("⚠️ Error writing WebSocket payload: %v\n", err)
+			conn.Close()
+			m.Unregister(paymentID, conn)
+		}
+	}
+}
+
+// HandleWebSocket upgrades connection and streams transactional updates to the frontend client
+func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	paymentIDStr := chi.URLParam(r, "paymentID")
+	_, err := uuid.Parse(paymentIDStr)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid payment ID")
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("⚠️ WebSocket Upgrade error:", err)
+		return
+	}
+
+	s.wsManager.Register(paymentIDStr, conn)
+
+	// Keep-alive listener & cleaning up connections
+	go func() {
+		defer func() {
+			s.wsManager.Unregister(paymentIDStr, conn)
+			conn.Close()
+		}()
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				break // Client disconnected or connection closed
+			}
+		}
+	}()
+}
