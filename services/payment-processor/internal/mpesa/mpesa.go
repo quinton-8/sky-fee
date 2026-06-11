@@ -169,4 +169,49 @@ func EncryptSecurityCredential(initiatorPassword string, certPEM string) (string
 		return "", errors.New("certificate does not contain an RSA public key")
 	}
 
-	
+	// Safaricom public key certificate usually requires PKCS1v15 padding
+	encrypted, err := rsa.EncryptPKCS1v15(cryptorand.Reader, pubKey, []byte(initiatorPassword))
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt password: %w", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+// getAccessToken fetches the OAuth token from Safaricom API
+func (s *RealMpesaService) getAccessToken() (string, error) {
+	url := "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+	if s.env == "production" {
+		url = "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.SetBasicAuth(s.consumerKey, s.consumerSecret)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("oauth token generation failed with status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   string `json:"expires_in"`
+	}
+	if err := json.Unmarshal(respBytes, &tokenResp); err != nil {
+		return "", err
+	}
+
+	return tokenResp.AccessToken, nil
+}
+
