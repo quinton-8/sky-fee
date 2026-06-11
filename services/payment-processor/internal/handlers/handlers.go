@@ -72,3 +72,23 @@ func (s *Server) GetSchools(w http.ResponseWriter, r *http.Request) {
 	}
 	respondWithJSON(w, http.StatusOK, schools)
 }
+
+// VerifyStudent validates student details against enrolled schools
+func (s *Server) VerifyStudent(w http.ResponseWriter, r *http.Request) {
+	schoolIDStr := chi.URLParam(r, "schoolID")
+	admissionNumber := chi.URLParam(r, "admissionNumber")
+
+	schoolID, err := strconv.Atoi(schoolIDStr)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid school ID")
+		return
+	}
+
+	student, err := s.Store.GetStudent(schoolID, admissionNumber)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Student verification failed: "+err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, student)
+}
