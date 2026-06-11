@@ -16,7 +16,6 @@ import (
 	"github.com/sky-fee/payment-processor/internal/lightning"
 	"github.com/sky-fee/payment-processor/internal/models"
 	"github.com/sky-fee/payment-processor/internal/mpesa"
-
 )
 
 // Server holds the dependencies for API routing
@@ -47,6 +46,35 @@ func NewServer(store db.Store, lightningClient lightning.Client, mpesaService mp
 		MPesa:     mpesaService,
 		wsManager: &WSManager{clients: make(map[string][]*websocket.Conn)},
 	}
+}
+
+// RegisterRoutes binds backend endpoints to the Chi Router
+func (s *Server) RegisterRoutes(r chi.Router) {
+	// CORS Middleware (simplified for dev)
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Api-Key")
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	r.Get("/api/schools", s.GetSchools)
+	r.Get("/api/schools/{schoolID}/students/{admissionNumber}", s.VerifyStudent)
+	r.Post("/api/payments", s.CreatePayment)
+	r.Get("/api/payments/{paymentID}", s.GetPayment)
+	r.Get("/api/payments/{paymentID}/ws", s.HandleWebSocket)
+	
+	// Webhook endpoint for LNbits or mock lightning payments
+	r.Post("/api/webhooks/lightning", s.LightningWebhook)
+	
+	// Testing helper to simulate lightning wallet payments
+	r.Post("/api/payments/{paymentID}/settle", s.TriggerMockPayment)
 }
 
 // Helper: respond with error JSON
