@@ -209,3 +209,56 @@ func (s *Server) GetPayment(w http.ResponseWriter, r *http.Request) {
 
 	respondWithJSON(w, http.StatusOK, payment)
 }
+
+// LightningWebhook receives payment confirmation hooks from lightning nodes (LNbits webhook format)
+func (s *Server) LightningWebhook(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PaymentHash string `json:"payment_hash"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if body.PaymentHash == "" {
+		respondWithError(w, http.StatusBadRequest, "payment_hash is required")
+		return
+	}
+
+	err := s.ProcessInvoiceSettlement(body.PaymentHash)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Settlement processing failed: "+err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// TriggerMockPayment allows manual checkout trigger without running real lightning nodes (for development convenience)
+func (s *Server) TriggerMockPayment(w http.ResponseWriter, r *http.Request) {
+	paymentIDStr := chi.URLParam(r, "paymentID")
+	paymentID, err := uuid.Parse(paymentIDStr)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid payment ID")
+		return
+	}
+
+	payment, err := s.Store.GetPayment(paymentID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Payment transaction not found")
+		return
+	}
+
+	if payment.Status != models.StatusPending {
+		respondWithError(w, http.StatusBadRequest, "Payment is already processed")
+		return
+	}
+
+	err = s.ProcessInvoiceSettlement(payment.PaymentHash)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to settle payment: "+err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"message": "Mock payment successfully processed"})
+}
