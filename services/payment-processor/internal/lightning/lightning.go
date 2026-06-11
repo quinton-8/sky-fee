@@ -46,6 +46,90 @@ func NewClient(url, invoiceKey string) Client {
 	}
 }
 
+// ==========================================
+// LNbitsClient Implementation
+// ==========================================
+
+type lnbitsCreateInvoiceReq struct {
+	Out     bool   `json:"out"`
+	Amount  int64  `json:"amount"` // in Sats
+	Memo    string `json:"memo"`
+	Webhook string `json:"webhook,omitempty"`
+}
+
+type lnbitsCreateInvoiceResp struct {
+	PaymentHash string `json:"payment_hash"`
+	PaymentRequest string `json:"payment_request"` // bolt11
+}
+
+type lnbitsCheckInvoiceResp struct {
+	Paid bool `json:"paid"`
+}
+
+func (c *LNbitsClient) CreateInvoice(amountSats int64, memo string) (string, string, error) {
+	reqBody := lnbitsCreateInvoiceReq{
+		Out:    false,
+		Amount: amountSats,
+		Memo:   memo,
+	}
+
+	jsonBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", "", err
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/payments", c.URL), bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return "", "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", c.InvoiceKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("lnbits returned status code %d", resp.StatusCode)
+	}
+
+	var result lnbitsCreateInvoiceResp
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", err
+	}
+
+	return result.PaymentHash, result.PaymentRequest, nil
+}
+
+func (c *LNbitsClient) CheckInvoice(paymentHash string) (bool, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/payments/%s", c.URL, paymentHash), nil)
+	if err != nil {
+		return false, err
+	}
+
+	req.Header.Set("X-Api-Key", c.InvoiceKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("lnbits payment check returned status %d", resp.StatusCode)
+	}
+
+	var result lnbitsCheckInvoiceResp
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, err
+	}
+
+	return result.Paid, nil
+}
+
 func (c *LNbitsClient) GetBTCKESRate() (float64, error) {
 	// Call public Coinbase API for exchange rate
 	resp, err := c.HTTPClient.Get("https://api.coinbase.com/v2/prices/BTC-KES/spot")
