@@ -9,7 +9,12 @@ import (
 // PaymentStatus represents the current state of a school fees transaction
 type PaymentStatus string
 
-
+const (
+	StatusPending   PaymentStatus = "PENDING"
+	StatusPaid      PaymentStatus = "PAID"
+	StatusDisbursed PaymentStatus = "DISBURSED"
+	StatusFailed    PaymentStatus = "FAILED"
+)
 
 // School represents an enrolled school on the SkyFee platform
 type School struct {
