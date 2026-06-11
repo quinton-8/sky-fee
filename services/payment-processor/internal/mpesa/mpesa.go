@@ -215,3 +215,76 @@ func (s *RealMpesaService) getAccessToken() (string, error) {
 	return tokenResp.AccessToken, nil
 }
 
+// ExecuteOffRamp converts satoshis to KES currency using fiat off-ramp service APIs
+func (s *RealMpesaService) ExecuteOffRamp(amountSats int64, targetRate float64) (float64, error) {
+	// KES amount is derived from satoshis: amountSats / 100,000,000 * rate
+	btcAmount := float64(amountSats) / 100000000.0
+	amountKES := btcAmount * targetRate
+
+	log.Printf(" [Off-Ramp] Initiating real off-ramp conversion of %d Sats (~%.8f BTC) to KES at rate %.2f -> Expected KES %.2f\n", 
+		amountSats, btcAmount, targetRate, amountKES)
+
+	// If no provider API key/URL is configured, we calculate the KES value and return it (simulating off-ramp)
+	if s.offrampAPIKey == "" {
+		log.Println(" Off-ramp API key not configured. Returning calculated KES value without calling external API.")
+		return amountKES, nil
+	}
+
+	url := s.offrampAPIURL
+	if url == "" {
+		switch s.offrampProvider {
+		case "bitnob":
+			url = "https://api.bitnob.co/v1/wallets/sell"
+		case "kotanipay":
+			url = "https://api.kotanipay.com/api/v1/payments/withdraw"
+		default:
+			url = "https://api.kotanipay.com/api/v1/payments/withdraw"
+		}
+	}
+
+	var reqBody []byte
+	var err error
+
+	if s.offrampProvider == "bitnob" {
+		payload := map[string]interface{}{
+			"amount":        amountSats,
+			"currency":      "SATS",
+			"fiat_currency": "KES",
+		}
+		reqBody, err = json.Marshal(payload)
+	} else {
+		payload := map[string]interface{}{
+			"amount":         amountKES,
+			"currency":       "KES",
+			"payment_method": "mpesa",
+		}
+		reqBody, err = json.Marshal(payload)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal off-ramp payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return 0, fmt.Errorf("failed to create off-ramp request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.offrampAPIKey)
+	req.Header.Set("X-Api-Key", s.offrampAPIKey)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("off-ramp API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("off-ramp API returned error status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	log.Printf("🎉 [Off-Ramp] Conversion request successfully sent. Provider responded with status %d.\n", resp.StatusCode)
+	return amountKES, nil
+}
+
