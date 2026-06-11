@@ -46,7 +46,61 @@ func NewClient(url, invoiceKey string) Client {
 	}
 }
 
+func (c *LNbitsClient) GetBTCKESRate() (float64, error) {
+	// Call public Coinbase API for exchange rate
+	resp, err := c.HTTPClient.Get("https://api.coinbase.com/v2/prices/BTC-KES/spot")
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("coinbase API status: %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Data struct {
+			Amount string `json:"amount"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return 0, err
+	}
+
+	var rate float64
+	_, err = fmt.Sscanf(payload.Data.Amount, "%f", &rate)
+	if err != nil {
+		return 0, err
+	}
+
+	return rate, nil
+}
+
+// ==========================================
+// MockClient Implementation (Mock Fallback)
+// ==========================================
+
+func (m *MockClient) CreateInvoice(amountSats int64, memo string) (string, string, error) {
+	// Generate random payment hash
+	randBytes := make([]byte, 16)
+	rand.Read(randBytes)
+	h := sha256.New()
+	h.Write(randBytes)
+	paymentHash := hex.EncodeToString(h.Sum(nil))
+
+	// Generate fake bolt11 payment request
+	invoice := fmt.Sprintf("lnbc%ds1p%smockpaymentrequest...", amountSats, paymentHash[:10])
+
+	return paymentHash, invoice, nil
+}
+
+func (m *MockClient) CheckInvoice(paymentHash string) (bool, error) {
+	// We simulate a mock invoice settlement check.
+	// In mock mode, the developer can trigger a payment webhook directly,
+	// or we can simulate payment after a short duration.
+	return false, nil
+}
 
 func (m *MockClient) GetBTCKESRate() (float64, error) {
 	// Coinbase public API works on local host too, let's try calling it, and fallback if internet is out.
