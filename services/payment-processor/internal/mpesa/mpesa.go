@@ -62,3 +62,93 @@ func (m *MockMpesaService) PayoutSchoolFees(paybill string, accountNumber string
 	
 	return receiptNumber, nil
 }
+
+// RealMpesaService handles real integration with Safaricom Daraja API and fiat off-ramp service APIs
+type RealMpesaService struct {
+	client          *http.Client
+	env             string // "sandbox" or "production"
+	consumerKey     string
+	consumerSecret  string
+	shortcode       string // PartyA (initiator shortcode)
+	initiatorName   string
+	initiatorPwd    string
+	securityCred    string // pre-encrypted security credential (optional)
+	certPEM         string // certificate PEM for RSA encryption (optional)
+	callbackURL     string // QueueTimeOutURL and ResultURL callback base
+	offrampProvider string // "kotanipay", "bitnob", or "generic"
+	offrampAPIKey   string
+	offrampAPIURL   string
+}
+
+// NewService returns a RealMpesaService if the required credentials are set,
+// otherwise it falls back to a MockMpesaService for local development.
+func NewService() Service {
+	consumerKey := os.Getenv("MPESA_CONSUMER_KEY")
+	consumerSecret := os.Getenv("MPESA_CONSUMER_SECRET")
+
+	if consumerKey == "" || consumerSecret == "" {
+		log.Println("⚡ Initializing M-Pesa & Off-Ramp Mock Service (Credentials missing: MPESA_CONSUMER_KEY/MPESA_CONSUMER_SECRET)")
+		return &MockMpesaService{}
+	}
+
+	log.Println("🎉 Initializing Real M-Pesa & Off-Ramp Service with Safaricom Daraja API")
+
+	env := os.Getenv("MPESA_ENV")
+	if env == "" {
+		env = "sandbox"
+	}
+
+	shortcode := os.Getenv("MPESA_SHORTCODE")
+	if shortcode == "" {
+		shortcode = "600192" // Default Safaricom sandbox shortcode
+	}
+
+	initiatorName := os.Getenv("MPESA_INITIATOR_NAME")
+	if initiatorName == "" {
+		initiatorName = "testapi" // Default Safaricom sandbox initiator name
+	}
+
+	initiatorPwd := os.Getenv("MPESA_INITIATOR_PASSWORD")
+	securityCred := os.Getenv("MPESA_SECURITY_CREDENTIAL")
+
+	certPEM := os.Getenv("MPESA_CERT_PEM")
+	if certPEM == "" {
+		certPath := os.Getenv("MPESA_CERT_PATH")
+		if certPath != "" {
+			certBytes, err := os.ReadFile(certPath)
+			if err == nil {
+				certPEM = string(certBytes)
+			}
+		}
+	}
+
+	callbackURL := os.Getenv("MPESA_CALLBACK_URL")
+	if callbackURL == "" {
+		callbackURL = "https://example.com/mpesa"
+	}
+
+	offrampProvider := os.Getenv("OFFRAMP_PROVIDER")
+	if offrampProvider == "" {
+		offrampProvider = "kotanipay"
+	}
+
+	offrampAPIKey := os.Getenv("OFFRAMP_API_KEY")
+	offrampAPIURL := os.Getenv("OFFRAMP_API_URL")
+
+	return &RealMpesaService{
+		client:          &http.Client{Timeout: 15 * time.Second},
+		env:             env,
+		consumerKey:     consumerKey,
+		consumerSecret:  consumerSecret,
+		shortcode:       shortcode,
+		initiatorName:   initiatorName,
+		initiatorPwd:    initiatorPwd,
+		securityCred:    securityCred,
+		certPEM:         certPEM,
+		callbackURL:     callbackURL,
+		offrampProvider: offrampProvider,
+		offrampAPIKey:   offrampAPIKey,
+		offrampAPIURL:   offrampAPIURL,
+	}
+}
+
