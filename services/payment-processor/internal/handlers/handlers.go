@@ -191,3 +191,21 @@ func (s *Server) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		BTCKESRate:       rate,
 	})
 }
+
+// GetPayment fetches status details of a specific payment
+func (s *Server) GetPayment(w http.ResponseWriter, r *http.Request) {
+	paymentIDStr := chi.URLParam(r, "paymentID")
+	paymentID, err := uuid.Parse(paymentIDStr)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid payment ID format")
+		return
+	}
+
+	payment, err := s.Store.GetPayment(paymentID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Payment not found: "+err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, payment)
+}
