@@ -39,4 +39,20 @@ func main() {
 	// M-Pesa & Offramp Payout Service (Mocks for Job 3)
 	mpesaService := mpesa.NewService()
 
+	// 3. Initialize Server & Routers
+	server := handlers.NewServer(store, lnClient, mpesaService)
+	
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	// Register API endpoints
+	server.RegisterRoutes(r)
+
+	// 4. Start HTTP Listener
+	log.Printf("📡 SkyFee API Backend listening on port %s\n", port)
+	err = http.ListenAndServe(":"+port, r)
+	if err != nil {
+		log.Fatalf("❌ Server failed to start: %v", err)
+	}
 }
