@@ -149,3 +149,107 @@ func (ps *PostgresStore) UpdatePaymentStatus(id uuid.UUID, status models.Payment
 	_, err := ps.db.Exec(query, status, mpesaReceipt, time.Now(), id)
 	return err
 }
+
+// ==========================================
+// MemoryStore Implementation (Mock Fallback)
+// ==========================================
+
+func NewMemoryStore() *MemoryStore {
+	ms := &MemoryStore{
+		schools:  make(map[int]models.School),
+		students: make(map[string]models.Student),
+		payments: make(map[uuid.UUID]models.Payment),
+	}
+
+	// Seed Memory Store with same sample data
+	ms.schools[1] = models.School{ID: 1, Name: "Alliance High School", Paybill: "222111", AccountNumber: "SchoolFees", CreatedAt: time.Now()}
+	ms.schools[2] = models.School{ID: 2, Name: "Kenya High School", Paybill: "333222", AccountNumber: "SchoolFees", CreatedAt: time.Now()}
+	ms.schools[3] = models.School{ID: 3, Name: "Lenana School", Paybill: "444333", AccountNumber: "SchoolFees", CreatedAt: time.Now()}
+
+	ms.students["1_AHS-8899"] = models.Student{ID: 1, SchoolID: 1, AdmissionNumber: "AHS-8899", Name: "John Kiprop", Grade: "Form 3 Green", CreatedAt: time.Now()}
+	ms.students["1_AHS-9012"] = models.Student{ID: 2, SchoolID: 1, AdmissionNumber: "AHS-9012", Name: "David Mwangi", Grade: "Form 1 Blue", CreatedAt: time.Now()}
+	ms.students["2_KHS-4455"] = models.Student{ID: 3, SchoolID: 2, AdmissionNumber: "KHS-4455", Name: "Sarah Cherono", Grade: "Form 4 East", CreatedAt: time.Now()}
+	ms.students["3_LEN-1234"] = models.Student{ID: 4, SchoolID: 3, AdmissionNumber: "LEN-1234", Name: "Joseph Kamau", Grade: "Form 2 West", CreatedAt: time.Now()}
+
+	return ms
+}
+
+func (ms *MemoryStore) GetSchools() ([]models.School, error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	var list []models.School
+	for _, s := range ms.schools {
+		list = append(list, s)
+	}
+	return list, nil
+}
+
+func (ms *MemoryStore) GetSchool(id int) (*models.School, error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	s, ok := ms.schools[id]
+	if !ok {
+		return nil, errors.New("school not found")
+	}
+	return &s, nil
+}
+
+func (ms *MemoryStore) GetStudent(schoolID int, admissionNumber string) (*models.Student, error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	key := fmt.Sprintf("%d_%s", schoolID, admissionNumber)
+	s, ok := ms.students[key]
+	if !ok {
+		return nil, errors.New("student not found")
+	}
+	return &s, nil
+}
+
+func (ms *MemoryStore) CreatePayment(payment *models.Payment) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	ms.payments[payment.ID] = *payment
+	return nil
+}
+
+func (ms *MemoryStore) GetPayment(id uuid.UUID) (*models.Payment, error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	p, ok := ms.payments[id]
+	if !ok {
+		return nil, errors.New("payment not found")
+	}
+	return &p, nil
+}
+
+func (ms *MemoryStore) GetPaymentByHash(paymentHash string) (*models.Payment, error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	for _, p := range ms.payments {
+		if p.PaymentHash == paymentHash {
+			return &p, nil
+		}
+	}
+	return nil, errors.New("payment not found")
+}
+
+func (ms *MemoryStore) UpdatePaymentStatus(id uuid.UUID, status models.PaymentStatus, mpesaReceipt string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	p, ok := ms.payments[id]
+	if !ok {
+		return errors.New("payment not found")
+	}
+	p.Status = status
+	p.MPesaReceipt = mpesaReceipt
+	p.UpdatedAt = time.Now()
+	ms.payments[id] = p
+	return nil
+}
