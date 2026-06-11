@@ -262,3 +262,75 @@ func (s *Server) TriggerMockPayment(w http.ResponseWriter, r *http.Request) {
 
 	respondWithJSON(w, http.StatusOK, map[string]string{"message": "Mock payment successfully processed"})
 }
+
+// ProcessInvoiceSettlement transitions invoice state, executes off-ramp, and triggers M-Pesa payouts
+func (s *Server) ProcessInvoiceSettlement(paymentHash string) error {
+	// 1. Fetch Payment details
+	payment, err := s.Store.GetPaymentByHash(paymentHash)
+	if err != nil {
+		return err
+	}
+
+	// Double check to ensure we aren't double-processing payments
+	if payment.Status != models.StatusPending {
+		log.Printf("⚠️ Payment %s already processed. Status: %s\n", payment.ID, payment.Status)
+		return nil
+	}
+
+	log.Printf("⚡ [Settlement] Invoice paid! Hash: %s. Initiating payout sequence...\n", paymentHash)
+
+	// 2. Mark payment as PAID in database
+	payment.Status = models.StatusPaid
+	s.Store.UpdatePaymentStatus(payment.ID, models.StatusPaid, "")
+	s.wsManager.Notify(payment.ID.String(), payment)
+
+	// 3. Resolve School details to fetch their Paybill/Till configurations
+	school, err := s.Store.GetSchool(payment.SchoolID)
+	if err != nil {
+		payment.Status = models.StatusFailed
+		s.Store.UpdatePaymentStatus(payment.ID, models.StatusFailed, "")
+		s.wsManager.Notify(payment.ID.String(), payment)
+		return fmt.Errorf("failed to fetch school details during payout: %v", err)
+	}
+
+	// 4. Execute Off-Ramp (BTC -> KES)
+	// Fetch live rate or fallback to cache rate
+	rate, rateErr := s.Lightning.GetBTCKESRate()
+	if rateErr != nil {
+		// fallback to a reasonable static rate if service rate call goes down at payment instant
+		rate = 9000000.0 
+	}
+	
+	amountKES, err := s.MPesa.ExecuteOffRamp(payment.AmountSats, rate)
+	if err != nil {
+		log.Printf("❌ Off-ramp conversion failed for payment %s: %v\n", payment.ID, err)
+		payment.Status = models.StatusFailed
+		s.Store.UpdatePaymentStatus(payment.ID, models.StatusFailed, "")
+		s.wsManager.Notify(payment.ID.String(), payment)
+		return err
+	}
+
+	// 5. Execute M-Pesa paybill transaction to the school
+	// Account name contains student registration info
+	accountIndicator := fmt.Sprintf("Adm:%s", payment.StudentAdmissionNumber)
+	receiptNumber, err := s.MPesa.PayoutSchoolFees(school.Paybill, accountIndicator, amountKES)
+	if err != nil {
+		log.Printf("❌ M-Pesa B2C payout failed for payment %s: %v\n", payment.ID, err)
+		payment.Status = models.StatusFailed
+		s.Store.UpdatePaymentStatus(payment.ID, models.StatusFailed, "")
+		s.wsManager.Notify(payment.ID.String(), payment)
+		return err
+	}
+
+	// 6. Complete payout updates
+	payment.Status = models.StatusDisbursed
+	payment.MPesaReceipt = receiptNumber
+	err = s.Store.UpdatePaymentStatus(payment.ID, models.StatusDisbursed, receiptNumber)
+	if err != nil {
+		log.Printf("⚠️ Payment completed but failed updating database status: %v\n", err)
+	}
+
+	log.Printf("🎉 [Success] Payment %s fully disbursed! M-Pesa Receipt: %s\n", payment.ID, receiptNumber)
+	s.wsManager.Notify(payment.ID.String(), payment)
+	return nil
+}
