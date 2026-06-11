@@ -26,5 +26,17 @@ func main() {
 	lnbitsURL := os.Getenv("LNBITS_URL")
 	lnbitsKey := os.Getenv("LNBITS_INVOICE_KEY")
 
-	
+	// 2. Initialize Core Modules
+	// Database (with PostgreSQL/Memory automatic fallback)
+	store, err := db.NewStore(dbURL)
+	if err != nil {
+		log.Fatalf("❌ Database connection error: %v", err)
+	}
+
+	// Lightning client (with LNbits/Mock fallback)
+	lnClient := lightning.NewClient(lnbitsURL, lnbitsKey)
+
+	// M-Pesa & Offramp Payout Service (Mocks for Job 3)
+	mpesaService := mpesa.NewService()
+
 }
