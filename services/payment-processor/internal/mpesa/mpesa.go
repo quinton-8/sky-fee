@@ -288,3 +288,145 @@ func (s *RealMpesaService) ExecuteOffRamp(amountSats int64, targetRate float64) 
 	return amountKES, nil
 }
 
+// PayoutSchoolFees sends M-Pesa B2C/B2B school fee payments using Safaricom's Daraja APIs
+func (s *RealMpesaService) PayoutSchoolFees(paybill string, accountNumber string, amountKES float64) (string, error) {
+	log.Printf("📲 [M-Pesa] Disbursing KES %.2f to Paybill/Recipient: %s, Account: %s\n", amountKES, paybill, accountNumber)
+
+	token, err := s.getAccessToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to get M-Pesa access token: %w", err)
+	}
+
+	// 1. Prepare SecurityCredential
+	securityCredential := s.securityCred
+	if securityCredential == "" {
+		if s.certPEM != "" && s.initiatorPwd != "" {
+			var encErr error
+			securityCredential, encErr = EncryptSecurityCredential(s.initiatorPwd, s.certPEM)
+			if encErr != nil {
+				log.Printf("⚠️ Failed to encrypt initiator password: %v. Falling back to raw password.\n", encErr)
+				securityCredential = s.initiatorPwd
+			}
+		} else {
+			securityCredential = s.initiatorPwd
+		}
+	}
+
+	// 2. Determine if recipient is a phone number (B2C) or a shortcode/paybill (B2B)
+	isPhone := false
+	cleanedPaybill := strings.TrimSpace(paybill)
+	if strings.HasPrefix(cleanedPaybill, "+") || strings.HasPrefix(cleanedPaybill, "254") || strings.HasPrefix(cleanedPaybill, "07") || strings.HasPrefix(cleanedPaybill, "01") {
+		isPhone = true
+	}
+
+	var url string
+	var reqBody []byte
+
+	baseDomain := "sandbox.safaricom.co.ke"
+	if s.env == "production" {
+		baseDomain = "api.safaricom.co.ke"
+	}
+
+	amountInt := int64(amountKES)
+	if amountInt <= 0 {
+		amountInt = 1
+	}
+
+	if isPhone {
+		// B2C Payout
+		url = fmt.Sprintf("https://%s/mpesa/b2c/v1/paymentrequest", baseDomain)
+		
+		commandID := os.Getenv("MPESA_B2C_COMMAND_ID")
+		if commandID == "" {
+			commandID = "BusinessPayment"
+		}
+
+		b2cReq := map[string]interface{}{
+			"InitiatorName":      s.initiatorName,
+			"SecurityCredential": securityCredential,
+			"CommandID":          commandID,
+			"Amount":             amountInt,
+			"PartyA":             s.shortcode,
+			"PartyB":             cleanedPaybill,
+			"Remarks":            "School fees disbursment",
+			"QueueTimeOutURL":    s.callbackURL + "/timeout",
+			"ResultURL":          s.callbackURL + "/result",
+			"Occasion":           "SchoolFees",
+		}
+		reqBody, err = json.Marshal(b2cReq)
+	} else {
+		// B2B Payout
+		url = fmt.Sprintf("https://%s/mpesa/b2b/v1/paymentrequest", baseDomain)
+		
+		commandID := os.Getenv("MPESA_B2B_COMMAND_ID")
+		if commandID == "" {
+			commandID = "BusinessPayBill"
+		}
+
+		b2bReq := map[string]interface{}{
+			"Initiator":              s.initiatorName,
+			"SecurityCredential":      securityCredential,
+			"CommandID":              commandID,
+			"SenderIdentifierType":   "4",
+			"RecieverIdentifierType": "4",
+			"Amount":                 amountInt,
+			"PartyA":                 s.shortcode,
+			"PartyB":                 cleanedPaybill,
+			"AccountReference":       accountNumber,
+			"Remarks":                "School fees disbursment to paybill",
+			"QueueTimeOutURL":        s.callbackURL + "/timeout",
+			"ResultURL":              s.callbackURL + "/result",
+		}
+		reqBody, err = json.Marshal(b2bReq)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal payout payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create payout request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("payout API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return "", fmt.Errorf("M-Pesa payout failed with status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var mpesaResp struct {
+		ConversationID           string `json:"ConversationID"`
+		OriginatorConversationID string `json:"OriginatorConversationID"`
+		ResponseCode             string `json:"ResponseCode"`
+		ResponseDescription      string `json:"ResponseDescription"`
+	}
+
+	if err := json.Unmarshal(respBytes, &mpesaResp); err != nil {
+		log.Printf("⚠️ Failed to parse M-Pesa response JSON: %v. Raw response: %s\n", err, string(respBytes))
+		return "MP_TX_" + time.Now().Format("20060102150405"), nil
+	}
+
+	if mpesaResp.ResponseCode != "0" {
+		return "", fmt.Errorf("M-Pesa payout rejected: Code %s - %s", mpesaResp.ResponseCode, mpesaResp.ResponseDescription)
+	}
+
+	log.Printf("🎉 [M-Pesa] Payout request accepted. ConversationID: %s\n", mpesaResp.ConversationID)
+
+	if s.env == "sandbox" || s.env == "" {
+		if len(mpesaResp.ConversationID) > 6 {
+			return fmt.Sprintf("SNDB_%s", mpesaResp.ConversationID[len(mpesaResp.ConversationID)-6:]), nil
+		}
+		return "SNDB_" + mpesaResp.ConversationID, nil
+	}
+
+	return mpesaResp.ConversationID, nil
+}
