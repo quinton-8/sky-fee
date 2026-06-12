@@ -1,1 +1,5 @@
-import React from "react";export default function Home(){return(<div className="max-w-4xl mx-auto py-20 px-6 text-center"><h1 className="text-5xl font-extrabold tracking-tight mb-4 bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">Automated Tuition Settlement System</h1><p className="text-slate-400 text-lg max-w-xl mx-auto mb-8">Real-time financial clearing pipelines processing Lightning Network invoices and M-Pesa business workflows natively.</p><div className="flex justify-center gap-4"><a href="/register" className="bg-indigo-600 hover:bg-indigo-500 px-6 py-3 rounded-lg font-medium transition">Register Institution</a><a href="/dashboard" className="bg-slate-800 hover:bg-slate-700 px-6 py-3 rounded-lg font-medium transition border border-slate-700">Open Console</a></div></div>);}
+import { redirect } from "next/navigation";
+
+export default function Home() {
+  redirect("/dashboard");
+}
