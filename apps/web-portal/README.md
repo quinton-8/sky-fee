@@ -1,29 +1,32 @@
 # SkyFee Web Portal
 
-The SkyFee web portal is a Next.js frontend for parents and schools. It lets a parent choose a school, verify a student by admission number, create a Lightning invoice for a KES school-fee payment, and track settlement through to the mocked M-Pesa payout.
+The SkyFee web portal is a Next.js App Router frontend for school-fee payments. The current app opens on a dashboard that lets a parent select a school, verify a student, generate a KES-denominated Lightning invoice, and watch settlement progress through to M-Pesa disbursement.
 
 ## Tech Stack
 
-- Next.js 14
+- Next.js 14 App Router
 - React 18
 - TypeScript
-- Native fetch API for backend calls
-- WebSocket status updates with polling fallback
+- Tailwind CSS
+- Lucide React icons
+- Native `fetch` for backend and price feed calls
+- Polling-based payment status updates, with backend WebSocket support available
 
 ## Project Structure
 
 ```text
-src/app/page.tsx             Landing page
-src/app/schools/page.tsx     Student verification and payment flow
-src/app/parents/page.tsx     Payment status lookup
-src/components/              UI components for schools, checkout, invoice, status, toast
-src/lib/api.ts               Backend API client
-src/lib/types.ts             Shared frontend types
+app/layout.tsx             Root layout, metadata, and top navigation
+app/page.tsx               Redirects `/` to `/dashboard`
+app/dashboard/page.tsx     Main school-fee payment dashboard and checkout modal
+app/register/page.tsx      Institution registration/provisioning screen
+app/globals.css            Global Tailwind imports and base body colors
+lib/finance.ts             Fee and fiat-to-satoshi helper logic
+package.json               Next.js scripts and dependencies
 ```
 
 ## Run Locally
 
-Start the backend first from the repository root:
+Start the backend first:
 
 ```bash
 cd services/payment-processor
@@ -35,7 +38,6 @@ Then start the frontend:
 ```bash
 cd apps/web-portal
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
@@ -43,63 +45,59 @@ Open `http://localhost:3000`.
 
 ## Environment Variables
 
-`.env.example` contains the local default:
+Set this in your shell or in `apps/web-portal/.env.local` when you need a non-default backend URL:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8080
 ```
 
-Set `NEXT_PUBLIC_API_URL` to the deployed payment processor URL when running against a remote backend. If this variable is empty, the API client uses same-origin relative `/api` routes.
+If `NEXT_PUBLIC_API_URL` is not set, the dashboard currently defaults to `http://localhost:8080`.
 
 ## Main Screens
 
-- `/` - product entry page with links into the payment and parent flows.
-- `/schools` - school selection, student verification, and payment invoice creation.
-- `/parents?paymentId=<payment_id>` - payment status tracking for an existing payment.
+- `/` - redirects to `/dashboard`.
+- `/dashboard` - primary payment operations screen with system stats, school/student verification, invoice creation, QR code display, invoice copy action, status polling, and mock settlement trigger.
+- `/register` - institution registration form that posts onboarding data to `http://localhost:8080/api/v1/schools/register`.
+
+Note: the current Go backend does not expose `/api/v1/schools/register`, so the registration page is an integration placeholder until that endpoint is implemented.
+
+## Dashboard Flow
+
+1. Load schools from `GET /api/schools`; if unavailable, use the local seeded school list.
+2. Fetch BTC-KES spot pricing from Coinbase; if unavailable, use the cached fallback rate.
+3. Select a school and verify an admission number with `GET /api/schools/{schoolID}/students/{admissionNumber}`.
+4. Enter the payer name and KES amount.
+5. Create a payment through `POST /api/payments`.
+6. Display the returned Lightning invoice as text and a QR code.
+7. Poll `GET /api/payments/{paymentID}` roughly every two seconds until settlement completes.
+8. In local mock mode, the checkout modal's `Continue (I've Paid)` action calls `POST /api/payments/{paymentID}/settle`.
 
 ## Local Demo Data
 
 When the backend runs without `DATABASE_URL`, it uses in-memory seed data:
 
-| School | Admission number | Student |
-| --- | --- | --- |
-| Alliance High School | `AHS-8899` | John Kiprop |
-| Alliance High School | `AHS-9012` | David Mwangi |
-| Kenya High School | `KHS-4455` | Sarah Cherono |
-| Lenana School | `LEN-1234` | Joseph Kamau |
+| School | Admission number | Student | Grade |
+| --- | --- | --- | --- |
+| Alliance High School | `AHS-8899` | John Kiprop | Form 3 Green |
+| Alliance High School | `AHS-9012` | David Mwangi | Form 1 Blue |
+| Kenya High School | `KHS-4455` | Sarah Cherono | Form 4 East |
+| Lenana School | `LEN-1234` | Joseph Kamau | Form 2 West |
 
-## Payment Flow
+## Backend Contract Used By The Frontend
 
-1. Visit `/schools`.
-2. Select a school and enter a matching admission number.
-3. Enter the parent/payer name and the amount in KES.
-4. Submit the form to create a Lightning invoice.
-5. Track the payment using the returned payment ID.
+- `GET /api/schools`
+- `GET /api/schools/{schoolID}/students/{admissionNumber}`
+- `POST /api/payments`
+- `GET /api/payments/{paymentID}`
+- `POST /api/payments/{paymentID}/settle`
 
-For local mock mode, settle a payment from the backend:
-
-```bash
-curl -X POST http://localhost:8080/api/payments/<payment_id>/settle
-```
-
-The status component listens over WebSocket at `/api/payments/{paymentID}/ws`. If the socket cannot connect, it polls `GET /api/payments/{paymentID}` every few seconds.
+The backend also exposes `GET /api/payments/{paymentID}/ws`, but the current dashboard implementation polls the payment endpoint instead.
 
 ## Scripts
 
 ```bash
-npm run dev      # Start local development server
+npm run dev      # Start local development server on port 3000
 npm run build    # Create production build
-npm start        # Serve production build
+npm start        # Serve production build on port 3000
 npm run lint     # Run Next.js linting
 ```
-
-## Backend Contract
-
-The frontend currently uses these backend endpoints:
-
-- `GET /api/schools`
-- `POST /api/schools`
-- `GET /api/schools/{schoolID}/students/{admissionNumber}`
-- `POST /api/payments`
-- `GET /api/payments/{paymentID}`
-- `GET /api/payments/{paymentID}/ws`
