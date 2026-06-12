@@ -13,7 +13,7 @@ database/schema.sql              PostgreSQL schema and seed data
 ## What It Does
 
 - Lists enrolled schools and verifies students by admission number.
-- Converts KES fee amounts to satoshis using a BTC/KES exchange rate.
+- Converts KSH fee amounts to satoshis using a BTC/KES exchange rate.
 - Creates Lightning invoices through LNbits when configured, or a mock invoice locally.
 - Tracks payment status with WebSockets and polling fallback.
 - Simulates off-ramp and M-Pesa school payout after invoice settlement.
